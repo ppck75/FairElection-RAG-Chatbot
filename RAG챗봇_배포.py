@@ -29,25 +29,23 @@
 처음 한 번만 아래 명령으로 필요한 패키지를 설치합니다.
 (가상환경(venv) 안에서 실행하는 것을 권장합니다.)
 
-    pip install streamlit google-generativeai chromadb python-dotenv
+    pip install streamlit google-generativeai chromadb
 
 또는 `requirements.txt` 파일에 다음을 적어두고 한 번에 설치할 수도 있습니다.
 
     streamlit
     google-generativeai
     chromadb
-    python-dotenv
 
     → pip install -r requirements.txt
 
 [실행 방법]
-1) 같은 폴더에 `.env` 파일을 만들고 한 줄을 추가합니다.
-       GEMINI_API_KEY=본인의_Gemini_API_키
-2) 사전 빌드된 `chroma_election_db/` 폴더가 같은 경로에 있는지 확인합니다.
-3) 아래 명령으로 앱을 띄웁니다(파이썬 직접 실행이 아니라 `streamlit run` 사용!).
+1) 사전 빌드된 `chroma_election_db/` 폴더가 같은 경로에 있는지 확인합니다.
+2) 아래 명령으로 앱을 띄웁니다(파이썬 직접 실행이 아니라 `streamlit run` 사용!).
 
        streamlit run RAG챗봇_배포.py
 
+3) 브라우저에서 본인의 Gemini API key를 입력한 뒤 질문합니다.
    브라우저가 자동으로 열리지 않으면 터미널에 표시된 http://localhost:8501 로 접속하세요.
 =====================================================================
 """
@@ -55,19 +53,11 @@
 # ─────────────────────────────────────────────
 # 1. 라이브러리 가져오기
 # ─────────────────────────────────────────────
-import os
 from pathlib import Path
 
 import streamlit as st
 import google.generativeai as genai
 import chromadb
-
-# dotenv는 로컬 개발 시 .env 파일에서 API 키를 불러올 때만 사용
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
 
 
 # ─────────────────────────────────────────────
@@ -83,31 +73,23 @@ EMBED_MODEL = "gemini-embedding-001"
 GEN_MODEL = "gemini-2.5-flash-lite"
 EMBED_DIM = 768
 TOP_K = 5
+GEMINI_API_KEY_DOC_URL = "https://ai.google.dev/gemini-api/docs/api-key"
 
 
 # ─────────────────────────────────────────────
 # 3. Gemini API 초기화
 # ─────────────────────────────────────────────
-def init_gemini() -> bool:
+def init_gemini(api_key: str) -> bool:
     """
-    Gemini API 키를 환경변수에서 읽어 설정합니다.
+    사용자가 화면에 입력한 Gemini API 키로 SDK를 설정합니다.
 
-    키 출처:
-      - 로컬 개발: 같은 폴더의 `.env` 파일이 `load_dotenv()`로 로드되어
-        `os.environ`에 주입됩니다.
-      - Hugging Face Spaces 배포: Space의 Settings → Secrets에 등록한 값이
-        컨테이너 환경변수로 자동 주입됩니다.
+    Hugging Face Spaces에서는 앱 운영자가 공용 키를 Secrets에 넣지 않고,
+    각 사용자가 본인의 키를 직접 입력해 사용합니다.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = api_key.strip()
 
     if not api_key:
-        st.error(
-            "❌ **GEMINI_API_KEY를 찾을 수 없습니다.**\n\n"
-            "**로컬 개발 시:** 같은 폴더의 `.env` 파일에 "
-            "`GEMINI_API_KEY=본인키` 한 줄을 추가하세요.\n\n"
-            "**Hugging Face Spaces 배포 시:** Space의 Settings → Secrets에 "
-            "`GEMINI_API_KEY` 항목을 추가하세요."
-        )
+        st.warning("Gemini API key를 입력한 뒤 질문해 주세요.")
         return False
 
     genai.configure(api_key=api_key)
@@ -152,9 +134,6 @@ def get_collection():
     `chroma_election_db/` 폴더와 컬렉션이 존재하지 않으면
     오류를 표시하고 앱을 중단합니다.
     """
-    if not init_gemini():
-        st.stop()
-
     if not Path(DB_PATH).exists():
         st.error(
             f"❌ Chroma DB 폴더를 찾을 수 없습니다: `{DB_PATH}`\n\n"
@@ -311,6 +290,21 @@ def main():
     # `with st.sidebar:` 블록 안의 모든 위젯은 좌측 사이드바에 그려진다.
     # 블록을 벗어나면 다시 메인 영역으로 돌아간다(파이썬의 컨텍스트 매니저).
     with st.sidebar:
+        st.header("🔑 Gemini API key")
+        st.text_input(
+            "본인의 Gemini API key",
+            type="password",
+            key="gemini_api_key",
+            placeholder="AIza...",
+            help="입력한 key는 브라우저 세션 동안만 사용하며 앱 코드나 저장소에 저장하지 않습니다."
+        )
+        st.markdown(
+            f"API key가 없다면 [Google 공식 문서에서 발급 방법 확인]({GEMINI_API_KEY_DOC_URL})"
+            " 후 입력하세요."
+        )
+        st.caption(f"사용 모델: `{GEN_MODEL}`")
+        st.divider()
+
         st.header("📌 사용 안내")
         st.markdown("""
 **이 챗봇은?**
@@ -378,6 +372,11 @@ def main():
 
     # 이번 재실행에서 질문이 있을 때만 답변 생성 절차로 들어간다.
     if query:
+        api_key = st.session_state.get("gemini_api_key", "")
+
+        if not init_gemini(api_key):
+            st.stop()
+
         # 사용자가 보낸 메시지를 즉시 화면에 그려 준다(반응성 ↑).
         with st.chat_message("user"):
             st.markdown(query)
